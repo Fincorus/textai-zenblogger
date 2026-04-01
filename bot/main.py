@@ -1,144 +1,135 @@
 """
-RU: Точка входа бота. Поддерживает polling и webhook.
-EN: Bot entrypoint. Supports polling and webhook.
+RU: Точка входа AI ZenBlogger бота.
+EN: Main entrypoint for AI ZenBlogger bot.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import socket
 import signal
-from contextlib import suppress
+import sys
+from contextlib import asynccontextmanager
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramNetworkError
+from aiogram.exceptions import TelegramNetworkError, TelegramBadRequest
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiohttp import ThreadedResolver, web
+from aiohttp import web
 from loguru import logger
 
 from bot.handlers import router
-from config.settings import load_settings
-from utils.scheduler import build_scheduler
+from config.settings import Settings, load_settings
 
 
-def _configure_logging(level: str) -> None:
-    logger.remove()
-    logger.add(lambda msg: print(msg, end=""), level=level)
+@asynccontextmanager
+async def lifespan(dispatcher: Dispatcher, bot: Bot):
+    """Lifespan для graceful shutdown и очистки webhook при необходимости."""
+    yield
+    await dispatcher.storage.close()
+    logger.info("Бот остановлен")
+
+
+async def delete_webhook_if_needed(bot: Bot) -> None:
+    """Автоматически удаляет webhook, если запускаемся в polling-режиме."""
+    try:
+        webhook_info = await bot.get_webhook_info()
+        if webhook_info.url:
+            logger.warning("Обнаружен активный webhook. Удаляем его для перехода в polling...")
+            await bot.delete_webhook(drop_pending_updates=True)
+            logger.success("Webhook успешно удалён")
+    except Exception as e:
+        logger.error(f"Ошибка при проверке/удалении webhook: {e}")
 
 
 async def _run_polling(dp: Dispatcher, bot: Bot) -> None:
-    # RU: Сетевые/ DNS проблемы часто временные. Делаем бесконечный retry с паузой.
-    # EN: Network/DNS issues are often transient. Keep retrying with delay.
-    while True:
-        try:
-            await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-            return
-        except (TelegramNetworkError, OSError) as e:
-            logger.warning("Polling network error: {}. Retry in 10s...", e)
-            await asyncio.sleep(10)
+    """Запуск бота в режиме polling."""
+    logger.info("Запуск бота в режиме POLLING...")
+    await delete_webhook_if_needed(bot)  # ← Авто-очистка конфликта
+
+    try:
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    except Exception as e:
+        logger.exception(f"Ошибка в polling: {e}")
+        raise
 
 
-async def _run_webhook(dp: Dispatcher, bot: Bot, settings) -> None:
+async def _run_webhook(dp: Dispatcher, bot: Bot, settings: Settings) -> None:
+    """Запуск бота в режиме webhook."""
     if not settings.WEBHOOK_BASE_URL:
-        raise RuntimeError("WEBHOOK_BASE_URL is required for webhook mode")
+        logger.warning("WEBHOOK_BASE_URL не задан → переключаемся на polling")
+        await _run_polling(dp, bot)
+        return
 
-    webhook_url = settings.WEBHOOK_BASE_URL.rstrip("/") + settings.WEBHOOK_PATH
+    logger.info(f"Запуск бота в режиме WEBHOOK на {settings.WEBHOOK_BASE_URL}{settings.WEBHOOK_PATH}")
 
-    await bot.set_webhook(
-        url=webhook_url,
-        secret_token=settings.WEBHOOK_SECRET_TOKEN.get_secret_value()
-        if settings.WEBHOOK_SECRET_TOKEN
-        else None,
-        drop_pending_updates=True,
-    )
+    try:
+        await bot.set_webhook(
+            url=f"{settings.WEBHOOK_BASE_URL}{settings.WEBHOOK_PATH}",
+            secret_token=settings.WEBHOOK_SECRET_TOKEN,
+            drop_pending_updates=True,
+        )
+        logger.success("Webhook успешно установлен")
+    except Exception as e:
+        logger.error(f"Не удалось установить webhook: {e}. Переключаемся на polling...")
+        await _run_polling(dp, bot)
+        return
 
+    # Запуск aiohttp сервера
     app = web.Application()
-    SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=settings.WEBHOOK_SECRET_TOKEN.get_secret_value()
-                         if settings.WEBHOOK_SECRET_TOKEN else None).register(
-        app, path=settings.WEBHOOK_PATH
-    )
+    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=settings.WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host=settings.WEBHOOK_HOST, port=settings.WEBHOOK_PORT)
+
+    port = int(os.getenv("PORT", settings.WEBHOOK_PORT or 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logger.info("Webhook server started on {}:{}", settings.WEBHOOK_HOST, settings.WEBHOOK_PORT)
 
-    # Keep running
-    stop_event = asyncio.Event()
+    logger.info(f"Webhook сервер запущен на 0.0.0.0:{port}")
 
-    def _stop(*_args):
-        stop_event.set()
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        with suppress(NotImplementedError):
-            loop.add_signal_handler(sig, _stop)
-
-    await stop_event.wait()
-    await runner.cleanup()
+    # Держим сервер запущенным
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await runner.cleanup()
 
 
 async def main() -> None:
+    """Главная функция запуска."""
+    logger.info("🚀 Запуск AI ZenBlogger...")
+
     settings = load_settings()
-    _configure_logging(settings.LOG_LEVEL)
 
-    # Ensure provider keys are available to litellm (best-effort).
-    if settings.XAI_API_KEY:
-        os.environ["XAI_API_KEY"] = settings.XAI_API_KEY.get_secret_value()
-    if settings.OPENAI_API_KEY:
-        os.environ["OPENAI_API_KEY"] = settings.OPENAI_API_KEY.get_secret_value()
-    if settings.GEMINI_API_KEY:
-        os.environ["GEMINI_API_KEY"] = settings.GEMINI_API_KEY.get_secret_value()
-    if settings.GROQ_API_KEY:
-        os.environ["GROQ_API_KEY"] = settings.GROQ_API_KEY.get_secret_value()
-    if settings.HUGGINGFACE_API_KEY:
-        os.environ["HUGGINGFACE_API_KEY"] = settings.HUGGINGFACE_API_KEY.get_secret_value()
-
+    # Настройка бота
     session = AiohttpSession(timeout=60)
-    # RU: Настраиваем TCPConnector, который aiogram создаёт внутри AiohttpSession.
-    # EN: Configure TCPConnector init kwargs used internally by AiohttpSession.
-    #
-    # Notes:
-    # - ThreadedResolver avoids aiodns on some Windows setups.
-    # - family=AF_INET forces IPv4 (often fixes IPv6 routing/DNS edge cases).
-    session._connector_init.update(  # type: ignore[attr-defined]
-        {
-            "resolver": ThreadedResolver(),
-            "ttl_dns_cache": 300,
-            "family": socket.AF_INET,
-        }
-    )
-
     bot = Bot(
         token=settings.BOT_TOKEN.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         session=session,
     )
-    dp = Dispatcher()
 
-    # Inject settings into handlers via dependency (dp["settings"])
-    dp["settings"] = settings
+    dp = Dispatcher()
     dp.include_router(router)
 
-    scheduler = build_scheduler(settings, bot)
-    if scheduler:
-        scheduler.start()
+    # Graceful shutdown
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        asyncio.get_running_loop().add_signal_handler(
+            sig, lambda: asyncio.create_task(dp.stop_polling())
+        )
 
     try:
         if settings.BOT_MODE == "webhook":
             await _run_webhook(dp, bot, settings)
         else:
             await _run_polling(dp, bot)
-    finally:
-        await bot.session.close()
+    except Exception as e:
+        logger.exception(f"Критическая ошибка запуска: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-
