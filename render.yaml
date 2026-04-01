@@ -11,7 +11,7 @@ services:
       - key: WEBHOOK_PATH
         value: /telegram/webhook
       - key: WEBHOOK_BASE_URL
-        sync: false
+        sync: https://textai-zenblogger.onrender.com
       - key: WEBHOOK_SECRET_TOKEN
         generateValue: true
       - key: WEBHOOK_HOST
