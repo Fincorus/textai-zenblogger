@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: textai-zenblogger
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: BOT_MODE
+        value: webhook
+      - key: WEBHOOK_PATH
+        value: /telegram/webhook
+      - key: WEBHOOK_BASE_URL
+        sync: false
+      - key: WEBHOOK_SECRET_TOKEN
+        generateValue: true
+      - key: WEBHOOK_HOST
+        value: 0.0.0.0
+      - key: WEBHOOK_PORT
+        value: "8080"
+      - key: LOG_LEVEL
+        value: INFO
+      # Fill these in Render dashboard (or set sync: false here)
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_TELEGRAM_ID
+        sync: false
+      - key: TG_CHANNEL_ID
+        sync: false
+      - key: LLM_PROVIDER
+        value: xai
+      - key: LLM_MODEL
+        value: grok-4.1-fast
+      - key: LLM_FALLBACKS
+        value: openai:gpt-4o-mini,gemini:gemini-2.0-flash,groq:llama-3.1-70b-versatile
+      - key: XAI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: HUGGINGFACE_API_KEY
+        sync: false
+
