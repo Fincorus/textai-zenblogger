@@ -9,13 +9,12 @@ from dataclasses import dataclass
 from typing import Optional
 
 from aiogram import Bot, F, Router
-from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from loguru import logger
 
 from bot.dzen_publisher import publish_to_dzen
-from bot.tg_publisher import publish_to_channel
+from bot.tg_publisher import publish_to_channel, _strip_plan_and_format
 from config.settings import load_settings
 from utils.article_generator import GeneratedArticle, generate_article
 
@@ -88,7 +87,6 @@ async def cmd_start(message: Message) -> None:
     if not _admin_only(message.from_user.id if message.from_user else None):
         return
 
-    # без HTML, чтобы не ловить ошибки на <тема>
     await message.answer(
         "Привет! Я умею генерировать статьи и публиковать их в TG/Дзен.\n\n"
         "Команды:\n"
@@ -131,7 +129,6 @@ async def on_topic_pick(query: CallbackQuery) -> None:
 
 
 async def _generate_and_preview(message: Message, topic: str) -> None:
-    # уведомление без HTML
     await message.answer(
         f"Генерирую статью по теме: {topic}…",
         parse_mode=None,
@@ -139,22 +136,15 @@ async def _generate_and_preview(message: Message, topic: str) -> None:
     article = await generate_article(settings, topic)
     draft_store.article = article
 
-    preview = article.html or ""
-
-    # грубая очистка HTML-тегов, чтобы Telegram не ругался
-    for tag in ["<br>", "<br/>", "<br />", "<b>", "</b>", "<i>", "</i>"]:
-        preview = preview.replace(tag, "\n")
-
-    # при желании можно полностью вырезать все теги:
-    # import re
-    # preview = re.sub(r"<[^>]+>", "", preview)
+    raw = article.html or ""
+    preview = _strip_plan_and_format(raw)
 
     if len(preview) > 1200:
-        preview = preview[:1200].rstrip() + "…\n\n(preview обрезан)"
+        preview = preview[:1200].rstrip() + "\n\n(preview обрезан)"
 
     await message.answer(
         f"Preview\n\n{article.title}\n\n{preview}",
-        parse_mode=None,  # ключевое: без HTML-парсинга
+        parse_mode=None,
         reply_markup=_actions_keyboard(),
         disable_web_page_preview=True,
     )
