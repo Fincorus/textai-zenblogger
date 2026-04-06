@@ -88,10 +88,11 @@ async def cmd_start(message: Message) -> None:
     if not _admin_only(message.from_user.id if message.from_user else None):
         return
 
+    # убираем HTML-парсинг, чтобы не ловить проблемы с <тема>
     await message.answer(
         "Привет! Я умею генерировать статьи и публиковать их в TG/Дзен.\n\n"
         "Команды:\n"
-        "- /generate <тема>\n"
+        "- /generate [тема]\n"
         "- /generate (покажу список тем)\n",
         parse_mode=None,
     )
@@ -137,12 +138,20 @@ async def _generate_and_preview(message: Message, topic: str) -> None:
     article = await generate_article(settings, topic)
     draft_store.article = article
 
-    preview = article.html
+    preview = article.html or ""
+
+    # Безопасная очистка br-тегов для Telegram
+    preview = (
+        preview.replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+    )
+
     if len(preview) > 1200:
-        preview = preview[:1200].rstrip() + "…<br><br><i>(preview обрезан)</i>"
+        preview = preview[:1200].rstrip() + "…\n\n<i>(preview обрезан)</i>"
 
     await message.answer(
-        f"<b>Preview</b>\n\n<b>{article.title}</b>\n<br>{preview}",
+        f"<b>Preview</b>\n\n<b>{article.title}</b>\n\n{preview}",
         parse_mode=ParseMode.HTML,
         reply_markup=_actions_keyboard(),
         disable_web_page_preview=True,
