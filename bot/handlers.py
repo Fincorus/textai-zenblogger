@@ -137,8 +137,9 @@ async def _generate_and_preview(message: Message, topic: str) -> None:
     draft_store.article = article
 
     raw = article.html or ""
-    preview = _strip_plan_and_format(raw)
+    text = _strip_plan_and_format(raw)
 
+    preview = text
     if len(preview) > 1200:
         preview = preview[:1200].rstrip() + "\n\n(preview обрезан)"
 
