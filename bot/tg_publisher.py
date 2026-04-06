@@ -37,7 +37,6 @@ def _strip_plan_and_format(text: str) -> str:
     text = "\n".join(content_lines)
 
     # 2) Форматируем заголовки H1/H2/H3
-    # Пример строки: "### H1: Саморазвитие — Путь..."
     def _fmt_heading(match: re.Match) -> str:
         level = match.group(1)
         title = match.group(2).strip()
@@ -75,9 +74,10 @@ async def publish_to_channel(*, bot, settings: Settings, article: GeneratedArtic
     raw = (article.html or "").strip()
     text = _strip_plan_and_format(raw)
 
-    # ограничение по длине для Telegram
-    if len(text) > 3800:
-        text = text[:3800].rstrip() + "\n\n(текст обрезан для Telegram)"
+    # целимся в ~3000 символов
+    MAX_LEN = 3000
+    if len(text) > MAX_LEN:
+        text = text[:MAX_LEN].rstrip()
 
     try:
         await bot.send_message(
