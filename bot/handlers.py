@@ -88,7 +88,7 @@ async def cmd_start(message: Message) -> None:
     if not _admin_only(message.from_user.id if message.from_user else None):
         return
 
-    # убираем HTML-парсинг, чтобы не ловить проблемы с <тема>
+    # без HTML, чтобы не ловить ошибки на <тема>
     await message.answer(
         "Привет! Я умею генерировать статьи и публиковать их в TG/Дзен.\n\n"
         "Команды:\n"
@@ -124,35 +124,37 @@ async def on_topic_pick(query: CallbackQuery) -> None:
 
     if query.message:
         await query.message.edit_text(
-            f"Ок, генерирую статью про: <b>{topic}</b>…",
-            parse_mode=ParseMode.HTML,
+            f"Ок, генерирую статью про: {topic}…",
+            parse_mode=None,
         )
         await _generate_and_preview(query.message, topic)
 
 
 async def _generate_and_preview(message: Message, topic: str) -> None:
+    # уведомление без HTML
     await message.answer(
-        f"Генерирую статью по теме: <b>{topic}</b>…",
-        parse_mode=ParseMode.HTML,
+        f"Генерирую статью по теме: {topic}…",
+        parse_mode=None,
     )
     article = await generate_article(settings, topic)
     draft_store.article = article
 
     preview = article.html or ""
 
-    # Безопасная очистка br-тегов для Telegram
-    preview = (
-        preview.replace("<br>", "\n")
-        .replace("<br/>", "\n")
-        .replace("<br />", "\n")
-    )
+    # грубая очистка HTML-тегов, чтобы Telegram не ругался
+    for tag in ["<br>", "<br/>", "<br />", "<b>", "</b>", "<i>", "</i>"]:
+        preview = preview.replace(tag, "\n")
+
+    # при желании можно полностью вырезать все теги:
+    # import re
+    # preview = re.sub(r"<[^>]+>", "", preview)
 
     if len(preview) > 1200:
-        preview = preview[:1200].rstrip() + "…\n\n<i>(preview обрезан)</i>"
+        preview = preview[:1200].rstrip() + "…\n\n(preview обрезан)"
 
     await message.answer(
-        f"<b>Preview</b>\n\n<b>{article.title}</b>\n\n{preview}",
-        parse_mode=ParseMode.HTML,
+        f"Preview\n\n{article.title}\n\n{preview}",
+        parse_mode=None,  # ключевое: без HTML-парсинга
         reply_markup=_actions_keyboard(),
         disable_web_page_preview=True,
     )
