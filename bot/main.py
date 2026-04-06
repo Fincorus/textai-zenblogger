@@ -47,7 +47,7 @@ async def delete_webhook_if_needed(bot: Bot) -> None:
 async def _run_polling(dp: Dispatcher, bot: Bot) -> None:
     """Запуск бота в режиме polling."""
     logger.info("Запуск бота в режиме POLLING...")
-    await delete_webhook_if_needed(bot)  # ← Авто-очистка конфликта
+    await delete_webhook_if_needed(bot)  # Авто-очистка конфликта
 
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
@@ -63,19 +63,23 @@ async def _run_webhook(dp: Dispatcher, bot: Bot, settings: Settings) -> None:
         await _run_polling(dp, bot)
         return
 
-    logger.info(f"Запуск бота в режиме WEBHOOK на {settings.WEBHOOK_BASE_URL}{settings.WEBHOOK_PATH}")
+    logger.info(
+        f"Запуск бота в режиме WEBHOOK на "
+        f"{settings.WEBHOOK_BASE_URL}{settings.WEBHOOK_PATH}"
+    )
 
     try:
+        # достаём строку из SecretStr, если нужно
         secret_token = None
-        if settings.WEBHOOK_SECRET_TOKEN: # если это SecretStr, достаём обычную строку
+        if settings.WEBHOOK_SECRET_TOKEN:
             try:
-        secret_token = settings.WEBHOOK_SECRET_TOKEN.get_secret_value()
+                secret_token = settings.WEBHOOK_SECRET_TOKEN.get_secret_value()
             except AttributeError:
-        secret_token = settings.WEBHOOK_SECRET_TOKEN
-        
+                secret_token = settings.WEBHOOK_SECRET_TOKEN
+
         await bot.set_webhook(
             url=f"{settings.WEBHOOK_BASE_URL}{settings.WEBHOOK_PATH}",
-            secret_token=settings.WEBHOOK_SECRET_TOKEN,
+            secret_token=secret_token,
             drop_pending_updates=True,
         )
         logger.success("Webhook успешно установлен")
@@ -89,10 +93,11 @@ async def _run_webhook(dp: Dispatcher, bot: Bot, settings: Settings) -> None:
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=settings.WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
 
-async def health(request):
-    return web.Response(text="OK")
+    # health-эндпоинт для Render
+    async def health(request):
+        return web.Response(text="OK")
 
-    app.router.add_get("/", health)  # эндпоинт для Render
+    app.router.add_get("/", health)
 
     runner = web.AppRunner(app)
     await runner.setup()
