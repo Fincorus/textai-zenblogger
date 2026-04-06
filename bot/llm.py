@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 
 from loguru import logger
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -101,8 +101,6 @@ async def generate_text(
         model_name = _litellm_model_name(cand.provider, cand.model)
         logger.info("LLM request -> {}", model_name)
 
-        # RU: небольшой retry на сетевые/временные ошибки.
-        # EN: small retry for transient network/timeouts.
         try:
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(3),
@@ -117,9 +115,8 @@ async def generate_text(
                         temperature=temperature,
                         max_tokens=max_tokens,
                         timeout=settings.LLM_TIMEOUT_S,
-                        extra_headers={},  # left for future customization
+                        extra_headers={},
                     )
-                    # litellm returns OpenAI-like schema
                     content = (resp["choices"][0]["message"].get("content") or "").strip()
                     if not content:
                         raise LLMError(f"Empty content from {model_name}")
@@ -130,4 +127,3 @@ async def generate_text(
             continue
 
     raise LLMError(f"All LLM providers failed. Last error: {last_err}")
-
