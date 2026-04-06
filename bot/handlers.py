@@ -16,23 +16,26 @@ from loguru import logger
 
 from bot.dzen_publisher import publish_to_dzen
 from bot.tg_publisher import publish_to_channel
-from config.settings import Settings
+from config.settings import load_settings
 from utils.article_generator import GeneratedArticle, generate_article
 
 router = Router(name="handlers")
 
+# Глобальные настройки, загружаем один раз
+settings = load_settings()
 
-def _admin_only(settings: Settings, user_id: Optional[int]) -> bool:
+
+def _admin_only(user_id: Optional[int]) -> bool:
     return user_id is not None and int(user_id) == int(settings.ADMIN_TELEGRAM_ID)
 
 
-def _topics(settings: Settings) -> list[str]:
+def _topics() -> list[str]:
     return [t.strip() for t in (settings.DEFAULT_TOPICS or "").split(",") if t.strip()]
 
 
-def _topic_keyboard(settings: Settings) -> InlineKeyboardMarkup:
+def _topic_keyboard() -> InlineKeyboardMarkup:
     buttons: list[list[InlineKeyboardButton]] = []
-    for t in _topics(settings)[:12]:
+    for t in _topics()[:12]:
         buttons.append([InlineKeyboardButton(text=t, callback_data=f"topic:{t}")])
     buttons.append([InlineKeyboardButton(text="Отмена", callback_data="action:cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -42,14 +45,26 @@ def _actions_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Опубликовать в TG-канал", callback_data="action:tg"),
+                InlineKeyboardButton(
+                    text="Опубликовать в TG-канал",
+                    callback_data="action:tg",
+                ),
             ],
             [
-                InlineKeyboardButton(text="Опубликовать в Дзен", callback_data="action:dzen"),
+                InlineKeyboardButton(
+                    text="Опубликовать в Дзен",
+                    callback_data="action:dzen",
+                ),
             ],
             [
-                InlineKeyboardButton(text="Оба", callback_data="action:both"),
-                InlineKeyboardButton(text="Отмена", callback_data="action:cancel"),
+                InlineKeyboardButton(
+                    text="Оба",
+                    callback_data="action:both",
+                ),
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data="action:cancel",
+                ),
             ],
         ]
     )
@@ -69,9 +84,10 @@ draft_store = DraftStore()
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, settings: Settings) -> None:
-    if not _admin_only(settings, message.from_user.id if message.from_user else None):
+async def cmd_start(message: Message) -> None:
+    if not _admin_only(message.from_user.id if message.from_user else None):
         return
+
     await message.answer(
         "Привет! Я умею генерировать статьи и публиковать их в TG/Дзен.\n\n"
         "Команды:\n"
@@ -81,21 +97,21 @@ async def cmd_start(message: Message, settings: Settings) -> None:
 
 
 @router.message(Command("generate"))
-async def cmd_generate(message: Message, command: CommandObject, settings: Settings) -> None:
-    if not _admin_only(settings, message.from_user.id if message.from_user else None):
+async def cmd_generate(message: Message, command: CommandObject) -> None:
+    if not _admin_only(message.from_user.id if message.from_user else None):
         return
 
     topic = (command.args or "").strip() if command else ""
     if not topic:
-        await message.answer("Выберите тему:", reply_markup=_topic_keyboard(settings))
+        await message.answer("Выберите тему:", reply_markup=_topic_keyboard())
         return
 
-    await _generate_and_preview(message, settings, topic)
+    await _generate_and_preview(message, topic)
 
 
 @router.callback_query(F.data.startswith("topic:"))
-async def on_topic_pick(query: CallbackQuery, settings: Settings) -> None:
-    if not _admin_only(settings, query.from_user.id if query.from_user else None):
+async def on_topic_pick(query: CallbackQuery) -> None:
+    if not _admin_only(query.from_user.id if query.from_user else None):
         await query.answer("Недоступно", show_alert=True)
         return
 
@@ -105,12 +121,18 @@ async def on_topic_pick(query: CallbackQuery, settings: Settings) -> None:
         return
 
     if query.message:
-        await query.message.edit_text(f"Ок, генерирую статью про: <b>{topic}</b>…", parse_mode=ParseMode.HTML)
-        await _generate_and_preview(query.message, settings, topic)
+        await query.message.edit_text(
+            f"Ок, генерирую статью про: <b>{topic}</b>…",
+            parse_mode=ParseMode.HTML,
+        )
+        await _generate_and_preview(query.message, topic)
 
 
-async def _generate_and_preview(message: Message, settings: Settings, topic: str) -> None:
-    await message.answer(f"Генерирую статью по теме: <b>{topic}</b>…", parse_mode=ParseMode.HTML)
+async def _generate_and_preview(message: Message, topic: str) -> None:
+    await message.answer(
+        f"Генерирую статью по теме: <b>{topic}</b>…",
+        parse_mode=ParseMode.HTML,
+    )
     article = await generate_article(settings, topic)
     draft_store.article = article
 
@@ -127,8 +149,8 @@ async def _generate_and_preview(message: Message, settings: Settings, topic: str
 
 
 @router.callback_query(F.data.startswith("action:"))
-async def on_action(query: CallbackQuery, bot: Bot, settings: Settings) -> None:
-    if not _admin_only(settings, query.from_user.id if query.from_user else None):
+async def on_action(query: CallbackQuery, bot: Bot) -> None:
+    if not _admin_only(query.from_user.id if query.from_user else None):
         await query.answer("Недоступно", show_alert=True)
         return
 
@@ -169,4 +191,3 @@ async def on_action(query: CallbackQuery, bot: Bot, settings: Settings) -> None:
         await query.message.answer("Готово.")
 
     logger.info("Action completed: {}", action)
-
