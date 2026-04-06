@@ -82,6 +82,11 @@ async def _run_webhook(dp: Dispatcher, bot: Bot, settings: Settings) -> None:
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=settings.WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
 
+async def health(request):
+    return web.Response(text="OK")
+
+    app.router.add_get("/", health)  # эндпоинт для Render
+
     runner = web.AppRunner(app)
     await runner.setup()
 
