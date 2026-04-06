@@ -66,6 +66,13 @@ async def _run_webhook(dp: Dispatcher, bot: Bot, settings: Settings) -> None:
     logger.info(f"Запуск бота в режиме WEBHOOK на {settings.WEBHOOK_BASE_URL}{settings.WEBHOOK_PATH}")
 
     try:
+        secret_token = None
+        if settings.WEBHOOK_SECRET_TOKEN: # если это SecretStr, достаём обычную строку
+            try:
+        secret_token = settings.WEBHOOK_SECRET_TOKEN.get_secret_value()
+            except AttributeError:
+        secret_token = settings.WEBHOOK_SECRET_TOKEN
+        
         await bot.set_webhook(
             url=f"{settings.WEBHOOK_BASE_URL}{settings.WEBHOOK_PATH}",
             secret_token=settings.WEBHOOK_SECRET_TOKEN,
