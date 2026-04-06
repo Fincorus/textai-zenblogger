@@ -1,59 +1,46 @@
-"""
-RU: Публикация статьи в Telegram-канал.
-EN: Publish an article to a Telegram channel.
-"""
-
-from __future__ import annotations
-
-from aiogram import Bot
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramBadRequest
 from loguru import logger
+import re
 
-from utils.article_generator import GeneratedArticle
-from utils.image import cover_url_for_topic
 from config.settings import Settings
+from utils.article_generator import GeneratedArticle
 
 
-async def publish_to_channel(
-    *,
-    bot: Bot,
-    settings: Settings,
-    article: GeneratedArticle,
-) -> None:
+async def publish_to_channel(*, bot, settings: Settings, article: GeneratedArticle) -> None:
     """
-    RU: Публикует обложку + текст в канал. Если HTML слишком длинный для подписи,
-    отправляем фото отдельно, затем текст сообщением.
-    EN: Posts cover + text to channel. If caption too long, send separately.
+    RU: Публикация статьи в TG-канал.
+    EN: Publish article to TG channel.
     """
-
-    cover_url = cover_url_for_topic(settings, article.topic)
     channel = settings.TG_CHANNEL_ID
-
-    # Telegram caption limit is ~1024 chars; message limit is 4096.
-    caption = f"<b>{article.title}</b>"
-
-    try:
-        await bot.send_photo(
-            chat_id=channel,
-            photo=cover_url,
-            caption=caption[:1024],
-            parse_mode=ParseMode.HTML,
-        )
-    except TelegramBadRequest as e:
-        logger.warning("send_photo failed (fallback to text only): {}", e)
-        await bot.send_message(chat_id=channel, text=caption, parse_mode=ParseMode.HTML)
-
-    # Split article html to Telegram message chunks (4096)
-    text = article.html.strip()
-    if not text:
+    if not channel:
+        logger.warning("TG_CHANNEL_ID is not set, skipping TG publish")
         return
 
-    chunks: list[str] = []
-    while text:
-        chunks.append(text[:4096])
-        text = text[4096:]
+    # формируем контент: заголовок + тело
+    ch = (article.html or "").strip()
 
-    for ch in chunks:
-        await bot.send_message(chat_id=channel, text=ch, parse_mode=ParseMode.HTML)
+    # сначала заменим h1/ h2 на простые заголовки
+    ch = re.sub(r"<h1[^>]*>(.*?)</h1>", r"\1\n", ch, flags=re.IGNORECASE | re.DOTALL)
+    ch = re.sub(r"<h2[^>]*>(.*?)</h2>", r"\1\n", ch, flags=re.IGNORECASE | re.DOTALL)
 
+    # заменим <br> на переносы строки
+    ch = ch.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+
+    # вырежем все остальные HTML-теги
+    ch = re.sub(r"<[^>]+>", "", ch)
+
+    # можно ограничить длину, если текст очень большой
+    if len(ch) > 3500:
+        ch = ch[:3500].rstrip() + "…\n\n(текст обрезан для Telegram)"
+
+    try:
+        await bot.send_message(
+            chat_id=channel,
+            text=ch,
+            parse_mode=None,  # важно: без HTML
+            disable_web_page_preview=False,
+        )
+        logger.info("Article published to TG channel {}", channel)
+    except Exception as e:
+        logger.exception("Failed to send article to TG channel: {}", e)
+        raise
