@@ -1,14 +1,70 @@
+"""
+RU: Публикация статей в Telegram-канал.
+EN: Publishing articles to Telegram channel.
+"""
+
+from __future__ import annotations
+
+import re
+
 from aiogram.enums import ParseMode
 from loguru import logger
-import re
 
 from config.settings import Settings
 from utils.article_generator import GeneratedArticle
 
 
+def _strip_plan_and_format(text: str) -> str:
+    """
+    RU: Убираем план (до первой строки с 'H1:' / 'H2:' / 'H3:')
+    и красиво форматируем заголовки, удаляя HTML.
+    EN: Remove outline (plan) and format headings nicely, stripping HTML.
+    """
+    lines = text.splitlines()
+
+    # 1) Убираем план до первой строки с H1/H2/H3
+    content_started = False
+    content_lines: list[str] = []
+    for line in lines:
+        if re.search(r"^\s*H[123]:", line):
+            content_started = True
+        if content_started:
+            content_lines.append(line)
+
+    if not content_lines:
+        content_lines = lines  # fallback, если не нашли H1/H2/H3
+
+    text = "\n".join(content_lines)
+
+    # 2) Форматируем заголовки H1/H2/H3
+    # Пример строки: "### H1: Саморазвитие — Путь..."
+    def _fmt_heading(match: re.Match) -> str:
+        level = match.group(1)
+        title = match.group(2).strip()
+        underline = "=" * len(title) if level == "1" else "-" * len(title)
+        return f"\n{title}\n{underline}\n"
+
+    text = re.sub(r"^\s*H([123]):\s*(.+)$", _fmt_heading, text, flags=re.MULTILINE)
+
+    # 3) <br> -> переносы строк
+    text = (
+        text.replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+    )
+
+    # 4) Убираем все остальные HTML‑теги
+    text = re.sub(r"<[^>]+>", "", text)
+
+    # 5) Сжимаем лишние пустые строки
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    return text
+
+
 async def publish_to_channel(*, bot, settings: Settings, article: GeneratedArticle) -> None:
     """
-    RU: Публикация статьи в TG-канал.
+    RU: Публикация статьи в TG-канал (без плана, с красиво оформленными заголовками).
     EN: Publish article to TG channel.
     """
     channel = settings.TG_CHANNEL_ID
@@ -16,28 +72,18 @@ async def publish_to_channel(*, bot, settings: Settings, article: GeneratedArtic
         logger.warning("TG_CHANNEL_ID is not set, skipping TG publish")
         return
 
-    # формируем контент: заголовок + тело
-    ch = (article.html or "").strip()
+    raw = (article.html or "").strip()
+    text = _strip_plan_and_format(raw)
 
-    # сначала заменим h1/ h2 на простые заголовки
-    ch = re.sub(r"<h1[^>]*>(.*?)</h1>", r"\1\n", ch, flags=re.IGNORECASE | re.DOTALL)
-    ch = re.sub(r"<h2[^>]*>(.*?)</h2>", r"\1\n", ch, flags=re.IGNORECASE | re.DOTALL)
-
-    # заменим <br> на переносы строки
-    ch = ch.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
-
-    # вырежем все остальные HTML-теги
-    ch = re.sub(r"<[^>]+>", "", ch)
-
-    # можно ограничить длину, если текст очень большой
-    if len(ch) > 3500:
-        ch = ch[:3500].rstrip() + "…\n\n(текст обрезан для Telegram)"
+    # ограничение по длине для Telegram
+    if len(text) > 3800:
+        text = text[:3800].rstrip() + "\n\n(текст обрезан для Telegram)"
 
     try:
         await bot.send_message(
             chat_id=channel,
-            text=ch,
-            parse_mode=None,  # важно: без HTML
+            text=text,
+            parse_mode=None,  # чистый текст, без HTML
             disable_web_page_preview=False,
         )
         logger.info("Article published to TG channel {}", channel)
