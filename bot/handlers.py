@@ -93,6 +93,7 @@ async def cmd_start(message: Message) -> None:
         "Команды:\n"
         "- /generate <тема>\n"
         "- /generate (покажу список тем)\n",
+        parse_mode=None,
     )
 
 
